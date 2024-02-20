@@ -1,7 +1,7 @@
 from imports import (torch,util,ImageDraw,ImageFont,Image,plt,sns,PrettyTable,
                      classification_report,confusion_matrix,compute_sample_weight,
                      matplotlib,auc,roc_curve,average_precision_score,precision_recall_curve,
-                     np,precision_score,recall_score)
+                     np,precision_score,recall_score,tqdm)
 
 def to_tensor(x):
     if not isinstance(x, torch.Tensor):
@@ -224,14 +224,15 @@ def threshold_per_index(model,dataset_pt,targets,predictions_sim,comparison,mode
   vector_list=[]
   threshold_list=[]
   string_list=[]
-  for sample_index in sample_indexes:
+  for sample_index in tqdm(sample_indexes, desc="Creating thresholds", unit="batch"):
     # print("sample_index",sample_index)
     example_indexes=dataset_pt.get_row_indexes(sample_index)#gry 
+    # print(example_indexes)
     # print("example_indexes",len(example_indexes))
     otpimal_dist=find_optimal_threshold(predictions_sim[example_indexes],targets[example_indexes],comparison)
     with torch.no_grad():
       # print(dataset_pt[example_indexes[0]][1],dataset_pt[example_indexes[0]][0])
-      emb1, emb2, _,_, _, _=dataset_pt.__getitem__(example_indexes[0])# zero is always the positive sample
+      emb1, emb2, _,_, _, _,_=dataset_pt.__getitem__(example_indexes[0])# zero is always the positive sample
       emb1=emb1.unsqueeze(0)
       emb2=emb2.unsqueeze(0)
       if(mode=="similarity"):
@@ -257,7 +258,7 @@ def find_optimal_threshold(distances, ground_truth_labels, comparison="dist"):
       positive_distances = [dist for dist, label in sorted_data if label == 1]
       negative_distances = [dist for dist, label in sorted_data if label == 0]
       # print(positive_distances,negative_distances)
-      positive_candidate = max(positive_distances)
+      positive_candidate = sum(positive_distances)/len(positive_distances)
       threshold_candidate_neg=10000
       for dist in negative_distances:
         if(dist>positive_candidate and dist<threshold_candidate_neg):
@@ -270,12 +271,12 @@ def find_optimal_threshold(distances, ground_truth_labels, comparison="dist"):
       positive_distances = [dist for dist, label in sorted_data if label == 1]
       negative_distances = [dist for dist, label in sorted_data if label == 0]
       # print(positive_distances,negative_distances)
-      positive_candidate = min(positive_distances)
+      positive_candidate = sum(positive_distances)/len(positive_distances)
       threshold_candidate_neg=-1
       for sim in negative_distances:
         if(sim<positive_candidate and sim>threshold_candidate_neg):
           threshold_candidate_neg=sim
     # Set the threshold between the highest positive value and the selected negative value
-      optimal_threshold = (positive_candidate+threshold_candidate_neg)/2 +0.10# + threshold_candidate_neg) / 2)
+      optimal_threshold = (positive_candidate+threshold_candidate_neg)/2 # + threshold_candidate_neg) / 2)
 
     return optimal_threshold

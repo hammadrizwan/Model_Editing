@@ -32,6 +32,7 @@ class CustomDataset(Dataset):
         return len(self.dataset)
 
     def total_indexes(self):
+        # print(self.dataset[0][2:])
         return np.unique(self.dataset[:, 3])
 
     def get_row_indexes(self,target_sample_index):
@@ -62,9 +63,9 @@ class CustomDataset(Dataset):
         sample_index=self.dataset[index][3]
         sent1=self.dataset[index][4]
         sent2=self.dataset[index][5]
+        negative_sample_cntrl=self.dataset[index][6]
 
-
-        return emb1, emb2, label,sample_index, sent1, sent2
+        return emb1, emb2, label,sample_index, sent1, sent2,negative_sample_cntrl
     
 def get_data_loader(dataset_paired,batch_size=2,shuffle=True,device="cpu"):
   """
@@ -90,6 +91,7 @@ def create_dataset_tripletloss(dataset,mode=0):
   dataset_paired_test=[]
   for row in dataset:
     if(mode==0):
+
       for index,vector in enumerate(row["vectors_neighborhood_prompts_high_sim"]):
 
         dataset_paired_train.append([vector,row["vector_edited_prompt"],row["vector_edited_prompt_paraphrases_processed"],
@@ -131,7 +133,7 @@ def create_dataset_pairs(dataset,neightbour_control=0,label_reversal=False):
     1 low sim as test and high sim as test
     2 random assigment
   """
-
+  
   if(label_reversal==True):
     paraphrase=0
     neightbour=1
@@ -142,24 +144,31 @@ def create_dataset_pairs(dataset,neightbour_control=0,label_reversal=False):
   dataset_paired_train=[]
   dataset_paired_test=[]
   for row_index,row in enumerate(dataset):
+
+    num_elements_to_select = min(5, len(row["openai_usable_paraphrases_embeddings"]))#add 5 max open ai paraphrases
+    sampled_indices, sampled_elements = zip(*random.sample(list(enumerate(row["openai_usable_paraphrases_embeddings"])), num_elements_to_select))# sample and get indexes
+    for index,vector in zip(sampled_indices, sampled_elements):
+      dataset_paired_train.append([row["vector_edited_prompt"],vector,paraphrase,row_index,
+                                 row["edited_prompt"][0],row["openai_usable_paraphrases"][index],0])
+
     dataset_paired_train.append([row["vector_edited_prompt"],row["vector_edited_prompt_paraphrases_processed"],paraphrase,row_index,
-                                 row["edited_prompt"][0],row["edited_prompt_paraphrases_processed"]])
+                                 row["edited_prompt"][0],row["edited_prompt_paraphrases_processed"],1])
     dataset_paired_test.append([row["vector_edited_prompt"],row["vector_edited_prompt_paraphrases_processed_testing"],paraphrase,row_index,
-                                row["edited_prompt"][0],row["edited_prompt_paraphrases_processed_testing"]])
+                                row["edited_prompt"][0],row["edited_prompt_paraphrases_processed_testing"],0])
     if(neightbour_control==0):
       for index,vector in enumerate(row["vectors_neighborhood_prompts_high_sim"]):
         dataset_paired_train.append([vector,row["vector_edited_prompt"],neightbour,row_index,
-                                     row["edited_prompt"][0],row["neighborhood_prompts_high_sim"][index]])
+                                     row["edited_prompt"][0],row["neighborhood_prompts_high_sim"][index],0])
       for index,vector in enumerate(row["vectors_neighborhood_prompts_low_sim"]):
         dataset_paired_test.append([vector,row["vector_edited_prompt"],neightbour,row_index,
-                                    row["edited_prompt"][0],row["neighborhood_prompts_low_sim"][index]])
+                                    row["edited_prompt"][0],row["neighborhood_prompts_low_sim"][index],0])
     elif(neightbour_control==1):
       for index,vector in enumerate(row["vectors_neighborhood_prompts_high_sim"]):
         dataset_paired_test.append([vector,row["vector_edited_prompt"],neightbour,row_index,
-                                    row["edited_prompt"][0],row["neighborhood_prompts_high_sim"][index]])
+                                    row["edited_prompt"][0],row["neighborhood_prompts_high_sim"][index],0])
       for index,vector in enumerate(row["vectors_neighborhood_prompts_low_sim"]):
         dataset_paired_train.append([vector,row["vector_edited_prompt"],neightbour,row_index,
-                                     row["edited_prompt"][0],row["neighborhood_prompts_low_sim"][index]])
+                                     row["edited_prompt"][0],row["neighborhood_prompts_low_sim"][index],0])
     else:
 
       chosen_elements_train = random.sample([ i for i in range(10)], k=5)
@@ -200,6 +209,8 @@ def data_construct_high_sim(dataset,neightbour_control=0,label_reversal=False,co
   row_indexes=[]
   for sample in data_loader:
     if(sample[2].item()==paraphrase):
+      if(sample[-1]!=1):
+        continue
       vector_list_edits.append(sample[0][0])
       edit_prompts.append(sample[4][0])
       row_indexes.append(sample[3][0].item())
@@ -212,7 +223,7 @@ def data_construct_high_sim(dataset,neightbour_control=0,label_reversal=False,co
       top_indices = torch.topk(metric, k=topk_neg).indices
       for index in top_indices[0].numpy().tolist():
         dataset_processed.append([vector_list_neighbours[index],target_vector,neighbour,row_indexes[index_vector],
-                                      edit_prompts[index_vector],neighbours_prompt[index]])
+                                      edit_prompts[index_vector],neighbours_prompt[index],0])
 
   return dataset_processed
 

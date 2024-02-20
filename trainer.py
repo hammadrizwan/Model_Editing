@@ -16,15 +16,15 @@ def train_model_combined(model,optimizer,data_loader,criterion_similarity,
       total_loss = 0.0
       total_batches = len(data_loader)
       for batch in data_loader:
-          embs1, embs2, labels, _ , _, _ = batch
+          embs1, embs2, labels, _ , _, _,_ = batch
           optimizer.zero_grad()
           if(mode=="classificaiton"):
             output1, output2, output3 = model(embs1,embs2)
             loss_classification = criterion_classification(output3, labels)
-            labels_cosine = torch.where(labels == 0, torch.tensor(0.45).to(device), torch.tensor(0.9).to(device))
+            labels_cosine = torch.where(labels == 0, torch.tensor(0.2).to(device), torch.tensor(0.95).to(device))
             loss_semantic_sim = criterion_similarity(output1,output2, labels_cosine)
-            alpha = 0.3
-            beta = 0.7
+            alpha = 0.0
+            beta = 1.0
             combined_loss = (alpha * loss_classification) + (beta * loss_semantic_sim)
             combined_loss.backward()
           else:
@@ -65,7 +65,7 @@ def train_control(dataset_paired_train,loss_function,learning_rate=0.0001,weight
     learning_rate: learning rate for Adam optimizer
   """
 
-  if(cls_weights):
+  if(cls_weights):# compute class weights
     labels=[]
     train_data_loader=dp.get_data_loader(dataset_paired_train,batch_size=1,shuffle=False,device=device)
     for row in train_data_loader:
@@ -75,7 +75,7 @@ def train_control(dataset_paired_train,loss_function,learning_rate=0.0001,weight
   else:
     class_weights=[1.0,1.0]
 
-  train_data_loader=dp.get_data_loader(dataset_paired_train,batch_size=32,shuffle=True,device=device)
+  train_data_loader=dp.get_data_loader(dataset_paired_train,batch_size=128,shuffle=True,device=device)
   if(loss_function=="cosine" or  loss_function=="cosine_crossentropy"):
     if(loss_function=="cosine_crossentropy"):
       mode="classificaiton"

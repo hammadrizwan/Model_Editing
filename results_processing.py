@@ -1,4 +1,4 @@
-from imports import torch,F,util,json,np,f1_score
+from imports import torch,F,util,json,np,f1_score,tqdm
 import helper_functions as hp
 import data_processing as dp
 
@@ -54,7 +54,7 @@ def get_model_results(model,data_loader,threshold=0.5,comparison="sim",mode="sim
   with torch.no_grad():
     model.to(device)
     for batch in data_loader:
-      embs1,embs2, labels,index, sent1, sent2 = batch
+      embs1,embs2, labels,index, sent1, sent2,_ = batch
       if(mode=="similarity"):
         output1, output2 = model(embs1,embs2)
       else:
@@ -197,7 +197,7 @@ def write_results_indivisual_threshold(dataset_train,dataset_test,model,comparis
   targets=[]
   with torch.no_grad():
     with open(file_path, 'w') as jsonl_file_writer:
-      for data in data_loader:
+      for data in tqdm(data_loader, desc="Processing results", unit="one unit"):
         label=data[2].item()
         targets.append(label)
         if(label==1):
@@ -218,7 +218,7 @@ def write_results_indivisual_threshold(dataset_train,dataset_test,model,comparis
           
         _,best_distance_index,best_distance=hp.find_nearest_vector(output1,vector_list,comparison)
 
-        if(best_distance.item()<=threshold_list[best_distance_index]):
+        if(best_distance.item()<=threshold_list[best_distance_index]):# difference in distance vs sim
           if(comparison=="sim"):
             pred=0
           else:
@@ -228,12 +228,21 @@ def write_results_indivisual_threshold(dataset_train,dataset_test,model,comparis
             pred=1
           else:
             pred=0
-        predictions.append(pred)
-        sim_difference=abs(best_distance.item()-sim2)
+
+        
+        sim_difference=abs(best_distance.item()-sim2)#sim difference should be zero if correct edit is matched
         if(sim_difference==0.0):
           matching=1
+          predictions.append(pred)
         else:
           matching=0
+          if(label==0):# if label is negative we want the prediction as is
+            predictions.append(pred)
+          else:# if label is 1 we want to check if we picked the right one
+            if pred == 1:
+              pred=0 
+            predictions.append(pred)
+
         data_entry={"label":label,"Matching":matching,"Prediction":pred,"Threshold":threshold_list[best_distance_index],"Distance/Sim predicted":best_distance.item(),
                                         "Distance/Sim Dataset":sim2,
                                         "Sim Difference":sim_difference,

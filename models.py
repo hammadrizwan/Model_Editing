@@ -1,13 +1,13 @@
 from imports import nn
 
 class SiameseNetworkTriplet(nn.Module):
-    def __init__(self, input_size, hidden_size1=256):
+    def __init__(self, input_size, hidden_size1=512):
         super(SiameseNetworkTriplet, self).__init__()
         self.fc = nn.Sequential(
             nn.Linear(input_size, hidden_size1),
             nn.ReLU(),
-            # nn.Linear(hidden_size1, hidden_size2),
-            # nn.ReLU(),
+            nn.Linear(hidden_size1, input_size),
+            nn.ReLU()
         )
     def forward_sequential(self, x):
         return self.fc(x)
@@ -45,6 +45,7 @@ class SiameseClassificationNetwork(nn.Module):
         self.fc = nn.Sequential(
             nn.Linear(input_size, hidden_size1),
             nn.ReLU(),
+            # nn.Dropout(p=0.1),
             # nn.Linear(hidden_size1, hidden_size2),
             # nn.ReLU(),
             # nn.Linear(hidden_size2, hidden_size1),

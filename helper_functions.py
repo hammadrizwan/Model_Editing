@@ -263,7 +263,7 @@ def find_optimal_threshold(distances, ground_truth_labels, comparison="dist"):
       for dist in negative_distances:
         if(dist>positive_candidate and dist<threshold_candidate_neg):
           threshold_candidate_neg=dist
-      optimal_threshold = positive_candidate + 25
+      optimal_threshold = positive_candidate + 5
     else:
       sorted_data = sorted(data, key=lambda x: x[0], reverse=False)
 

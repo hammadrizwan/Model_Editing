@@ -3,50 +3,44 @@ import helper_functions as hp
 import data_processing as dp
 
 
-def get_model_results_triplet(model,data_loader,threshold=0.5):
+def get_model_results_triplet(model,data_loader,threshold=10.0,device="cpu"):
   model.eval()
-  counter=0
-  evaluated=[]
   threshold_predictions=[]
   predictions=[]
   targets=[]
   distances_sims=[]
+  edits_checked_neighbour=[]
+  edits_checked_paraphrases=[]
   with torch.no_grad():
+    model.to(device)
     for batch in data_loader:
-      embs1, embs2, embs3, sent1 , sent2, sent3 = batch
+      embs1, embs2, embs3, _ , sent1,sent2, sent3,_ = batch
       output1, output2, output3 = model(embs1,embs2,embs3)
-      if(sent3 not in evaluated):
-        normalized_distance = (F.pairwise_distance(output2,output3, keepdim=True).item())#/ (torch.norm(output2) + torch.norm(output3))).item()#util.cos_sim(output2, output3)
+      if(sent1[0]+"_"+sent3[0] not in edits_checked_paraphrases):#only compare an edit with sample neighbour once
+        prediction_paraphrase = F.pairwise_distance(output2,output3, keepdim=True).item()
+        prediction_paraphrase_orig = F.pairwise_distance(embs2,embs3, keepdim=True).item()#/ (torch.norm(output2) + torch.norm(output3))).item()#util.cos_sim(output2, output3)
+        
 
-        normalized_distance_orig = (F.pairwise_distance(embs2,embs3, keepdim=True).item())#/ (torch.norm(embs2) + torch.norm(embs3))).item()#util.cos_sim(output2, output3)
-        # print(normalized_distance)
-        distances_sims.append([normalized_distance,normalized_distance_orig,0])
-        # sim_score=cosine_scores[0][0].numpy()
-        predictions.append(normalized_distance)
+        distances_sims.append([prediction_paraphrase,prediction_paraphrase_orig,1])
+        predictions.append(prediction_paraphrase)
+        targets.append(1)
+        threshold_predictions.extend([1 if prediction_paraphrase < threshold else 0])
+        edits_checked_paraphrases.append(sent1[0]+"_"+sent3[0])
+
+      if(sent1[0]+"_"+sent2[0] not in edits_checked_neighbour):#only compare an edit with sample neighbour once
+        prediction_neighbour= F.pairwise_distance(output1,output2, keepdim=True).item()
+        prediction_neighbour_orig = F.pairwise_distance(embs1,embs2, keepdim=True).item()
+        distances_sims.append([prediction_neighbour,prediction_neighbour_orig,0])
+        predictions.append(prediction_neighbour)
         targets.append(0)
-        if(normalized_distance<threshold):
-          threshold_predictions.append(0)
-        else:
-          threshold_predictions.append(1)
-        evaluated.append(sent3)
+        threshold_predictions.extend([1 if prediction_paraphrase < threshold else 0])
+        edits_checked_neighbour.append(sent1[0]+"_"+sent2[0])
 
-
-      #negative pair
-      normalized_distance = (F.pairwise_distance(output2,output1, keepdim=True).item())#/ (torch.norm(output2) + torch.norm(output1)))[0][0].item()#util.cos_sim(output2, output3)
-      normalized_distance_orig = (F.pairwise_distance(embs2,embs1, keepdim=True).item())#/ (torch.norm(embs2) + torch.norm(embs1))).item()#util.cos_sim(output2, output3)
-      distances_sims.append([normalized_distance,normalized_distance_orig,1])
-      predictions.append(normalized_distance)
-      targets.append(1)
-      if(normalized_distance>threshold):
-        threshold_predictions.append(1)
-      else:
-        threshold_predictions.append(0)
   return distances_sims,predictions,threshold_predictions,targets
 
 
 def get_model_results(model,data_loader,threshold=0.5,comparison="sim",mode="similarity",device="cpu"):
   model.eval()
-  counter=0
   predictions=[]
   targets=[]
   threshold_predictions=[]
@@ -85,8 +79,11 @@ def get_best_threshold(precision, recall, thresholds_pr,predictions,targets,comp
   
   f1_scores = 2 * (precision * recall) / (precision + recall)
   f1_scores = np.nan_to_num(f1_scores, nan=0)
-  best_threshold = thresholds_pr[np.argmax(f1_scores)]
-  
+
+  try:
+    best_threshold = thresholds_pr[np.argmax(f1_scores)]
+  except:
+    best_threshold = thresholds_pr[-1]
   print(f"Best Threshold: {best_threshold}")
   # Use the best threshold to make predictions
   # y_pred = (predictions >= best_threshold).astype(int)
@@ -101,39 +98,61 @@ def get_best_threshold(precision, recall, thresholds_pr,predictions,targets,comp
   return best_threshold
 
 
-def write_result_to_file(model,dataset_test,comparison,mode,file_path,device="cpu"):
+def write_result_to_file(model,dataset_test,comparison,mode,file_path,device="cpu",loss_function="contrastive"):
   with open(file_path, 'w') as jsonl_file_writer:
-    data_processed=[]
     with torch.no_grad():
-      data_loader_test_temp=dp.get_data_loader(dataset_test,batch_size=1,shuffle=False,device=device)
+      if(loss_function=="triplet"):
+        data_loader_test_temp=dp.get_data_loader_triplet(dataset_test,batch_size=1,shuffle=False,device=device)
+      else:
+        data_loader_test_temp=dp.get_data_loader(dataset_test,batch_size=1,shuffle=False,device=device)
+
       model.to(device)
       for batch in data_loader_test_temp:
-        embs1,embs2, label,index, sent1, sent2 = batch
-        if(mode=="similarity"):
-          output1, output2 = model(embs1,embs2)
-        else:#classification cosine_crossentropy
-          output1, output2,_ = model(embs1,embs2)
-
-        if(comparison=="sim"):
-          cosine_scores =util.cos_sim(embs1,embs2)
-          before_projection_sim=cosine_scores[0][0].numpy().tolist()
-          cosine_scores =util.cos_sim(output1, output2)
-          after_projection_sim=cosine_scores[0][0].numpy().tolist()
-          data_entry={"sentence1":sent1,
-                                 "sentence2":sent2,
-                                 "label":label.numpy().tolist(),
-                                 "similarity_before_projection":before_projection_sim,
-                                 "similarity_after_projection":after_projection_sim}
+        if(loss_function=="triplet"):
+          embs1,embs2, embs3,index, sent1, sent2,sent3,_ = batch
+          output1, output2, output3 = model(embs1,embs2,embs3)
+          after_projection_distance_neightbour=(F.pairwise_distance(output1, output2, keepdim=True))[0][0].item()
+          before_projection_distance_neightbour=(F.pairwise_distance(embs1, embs2, keepdim=True))[0][0].item()
+        
+          after_projection_distance_paraphrase=(F.pairwise_distance(output2, output3, keepdim=True))[0][0].item()
+          before_projection_distance_paraphrase=(F.pairwise_distance(embs2, embs3, keepdim=True))[0][0].item()
+          data_entry={"sentence_edit":sent1,
+                                "sentence_neighbour":sent2,
+                                "sentence_paraphrase":sent3,
+                                "index":index.numpy().tolist(),
+                                "after_projection_distance_neightbour":after_projection_distance_neightbour,
+                                "before_projection_distance_neightbour":before_projection_distance_neightbour,
+                                "after_projection_distance_paraphrase":after_projection_distance_paraphrase,
+                                "before_projection_distance_paraphrase":before_projection_distance_paraphrase}
+          json.dump(data_entry, jsonl_file_writer)
+          jsonl_file_writer.write('\n')
         else:
-          after_projection_distance=(F.pairwise_distance(output1, output2, keepdim=True))[0][0].item()
-          before_projection_distance=(F.pairwise_distance(embs1, embs2, keepdim=True))[0][0].item()
-          data_entry={"sentence1":sent1,
-                                 "sentence2":sent2,
-                                 "label":label.numpy().tolist(),
-                                 "distance_before_projection":before_projection_distance,
-                                 "distance_after_projection":after_projection_distance}
-        json.dump(data_entry, jsonl_file_writer)
-        jsonl_file_writer.write('\n')
+          embs1,embs2, label,index, sent1, sent2,_ = batch
+          if(mode=="similarity"):
+            output1, output2 = model(embs1,embs2)
+          else:#classification cosine_crossentropy
+            output1, output2,_ = model(embs1,embs2)
+
+          if(comparison=="sim"):
+            cosine_scores =util.cos_sim(embs1,embs2)
+            before_projection_sim=cosine_scores[0][0].numpy().tolist()
+            cosine_scores =util.cos_sim(output1, output2)
+            after_projection_sim=cosine_scores[0][0].numpy().tolist()
+            data_entry={"sentence1":sent1,
+                                  "sentence2":sent2,
+                                  "label":label.numpy().tolist(),
+                                  "similarity_before_projection":before_projection_sim,
+                                  "similarity_after_projection":after_projection_sim}
+          else:
+            after_projection_distance=(F.pairwise_distance(output1, output2, keepdim=True))[0][0].item()
+            before_projection_distance=(F.pairwise_distance(embs1, embs2, keepdim=True))[0][0].item()
+            data_entry={"sentence1":sent1,
+                                  "sentence2":sent2,
+                                  "label":label.numpy().tolist(),
+                                  "distance_before_projection":before_projection_distance,
+                                  "distance_after_projection":after_projection_distance}
+          json.dump(data_entry, jsonl_file_writer)
+          jsonl_file_writer.write('\n')
 
 def write_results_to_file_vector_list(dataset_train,dataset_test,model,comparison,mode,file_path,device="cpu"):
   data_loader_test=dp.get_data_loader(dataset_train,batch_size=1,shuffle=False,device=device)
@@ -184,14 +203,22 @@ def write_results_to_file_vector_list(dataset_train,dataset_test,model,compariso
         jsonl_file_writer.write('\n')
 
 
-def write_results_indivisual_threshold(dataset_train,dataset_test,model,comparison,mode,file_path,device="cpu"):
-  data_loader=dp.get_data_loader(dataset_train,batch_size=1,shuffle=False,device=device)
-  distances_sims,predictions_sim,_,targets=get_model_results(model,data_loader,threshold=0.5,comparison=comparison,mode=mode,device=device)
+def write_results_indivisual_threshold(dataset_train,dataset_test,model,comparison,mode,file_path,device="cpu",loss_function="contrastive"):
+  if(loss_function=="triplet"):
+    data_loader=dp.get_data_loader_triplet(dataset_train,batch_size=1,shuffle=False,device=device)
+    distances_sims,predictions_sim,_,targets=get_model_results_triplet(model,data_loader,threshold=0.5,comparison=comparison,mode=mode,device=device)
+  else:
+    data_loader=dp.get_data_loader(dataset_train,batch_size=1,shuffle=False,device=device)
+    distances_sims,predictions_sim,_,targets=get_model_results(model,data_loader,threshold=0.5,comparison=comparison,mode=mode,device=device)
   
  
   vector_list,threshold_list,string_list=hp.threshold_per_index(model,dp.CustomDataset(dataset_train,device)
                                                               ,targets,predictions_sim,comparison,mode)
-  data_loader=dp.get_data_loader(dataset_test,batch_size=1,shuffle=False,device=device)
+  
+  if(loss_function=="triplet"):
+    data_loader=dp.get_data_loader_triplet(dataset_test,batch_size=1,shuffle=False,device=device)
+  else:
+    data_loader=dp.get_data_loader(dataset_test,batch_size=1,shuffle=False,device=device)
   counter=0
   predictions=[]
   targets=[]
@@ -231,7 +258,7 @@ def write_results_indivisual_threshold(dataset_train,dataset_test,model,comparis
 
         
         sim_difference=abs(best_distance.item()-sim2)#sim difference should be zero if correct edit is matched
-        if(sim_difference==0.0):
+        if(string_list[best_distance_index]==data[4][0]):
           matching=1
           predictions.append(pred)
         else:
